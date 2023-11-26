@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { SetupKeys } from '../types'
-import inquirer, { Question, ListQuestionOptions } from 'inquirer';
+import inquirer, { Question, ListQuestionOptions, Answers } from 'inquirer';
 import fs from 'fs';
 import path from 'path';
 import { generateEmail } from '../openai/index.js';
@@ -141,7 +141,8 @@ const extractSubjectAndEmail = (emailText: ChatCompletionMessage): EmailParts | 
     return { subject, emailBody };
 }
 
-const getEmailInformation = async () => {
+
+const getEmailInformation = async (): Promise<Answers> => {
 
     const questions: Array<Question> = [
         {
@@ -172,20 +173,33 @@ const getEmailInformation = async () => {
             type: 'input'
         }
     ]
-
-    let userMessage: string = ''
     const answers = await inquirer.prompt(questions);
-    userMessage += `Context: ${answers.moreInfo}\n Email Signature: ${process.env.FULLNAME}`
-    if (answers.tone) {
-        userMessage += `\nTone: ${answers.tone}`
+    return answers
+}
+
+const preparePrompt = (userChoices: Answers): Array<ChatCompletionAssistantMessageParam | ChatCompletionMessageParam> => {
+    let userMessage: string = ''
+
+    userMessage += `Context: ${userChoices.moreInfo}\n Email Signature: ${process.env.FULLNAME}`
+    if (userChoices.tone) {
+        userMessage += `\nTone: ${userChoices.tone}`
     }
     const userMessages: ChatCompletionMessageParam = { role: 'user', content: userMessage }
     const correspondence: Array<ChatCompletionAssistantMessageParam | ChatCompletionMessageParam> = [userMessages]
+    return correspondence;
+}
 
+const generateAndSendEmail = async() => {
+    const choices = await getEmailInformation()
+    const correspondence = preparePrompt(choices);
     try {
         console.log("-----GENERATING EMAIL-----")
         let email = await generateEmail(correspondence);
-        console.log(email)
+        if (!email){
+            console.log('We encountered an issue generating the email. Please try again');
+            return
+        }
+        console.log(email.content)
         console.log("----EMAIL GENERATED-----")
 
         let isHappy = await checkIfUserIsHappyWithEmail()
@@ -200,7 +214,11 @@ const getEmailInformation = async () => {
 
             console.log("-----UPDATING EMAIL-----")
             email = await generateEmail(correspondence);
-            console.log(email)
+            if (!email){
+                console.log('We encountered an issue generating the email. Please try again');
+                return
+            }
+            console.log(email.content)
             console.log("----EMAIL UPDATED-----")
             isHappy = await checkIfUserIsHappyWithEmail()
         }
@@ -213,7 +231,7 @@ const getEmailInformation = async () => {
             const { subject, emailBody } = emailData;
             console.log(subject, emailBody)
             console.log('----- SENDING EMAIL ----')
-            await sendEmail(answers.emailTo, subject, emailBody)
+            await sendEmail(choices.emailTo, subject, emailBody)
         }
 
     } catch (error) {
@@ -224,7 +242,7 @@ const getEmailInformation = async () => {
 const handleUsersChoice = async (choice: string) => {
     switch (choice) {
         case 'Generate and Send Email':
-            getEmailInformation()
+            generateAndSendEmail()
         default:
             return
     }
