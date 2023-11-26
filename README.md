@@ -22,7 +22,7 @@ If you want to skip the setup, you can create a .env file in the root folder and
 
 ## Getting Started.
 
-1. Install the dependencies - ```npm install``
+1. Install the dependencies - ```npm install```
 2. Build the app - ```npm run build```
 3. Start the app - ```npm start```
 
