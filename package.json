@@ -4,7 +4,6 @@
   "description": "A cli that drafts and sends emails for you.",
   "main": "index.js",
   "type": "module",
-
   "scripts": {
     "build": "tsc",
     "start": "node ./dist/index.js",
@@ -22,6 +21,7 @@
   },
   "homepage": "https://github.com/vic30004/lazy-emails#readme",
   "dependencies": {
+    "@types/nodemailer": "^6.4.14",
     "dotenv": "^16.3.1",
     "inquirer": "^9.2.12",
     "nodemailer": "^6.9.7",

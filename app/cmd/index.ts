@@ -3,15 +3,19 @@ import { SetupKeys } from '../types'
 import inquirer, { Question, ListQuestionOptions } from 'inquirer';
 import fs from 'fs';
 import path from 'path';
+import { generateEmail } from '../openai/index.js';
+import { ChatCompletionMessage, ChatCompletionMessageParam, ChatCompletionUserMessageParam, ChatCompletionAssistantMessageParam } from "openai/resources/index.js";
+import { sendEmail } from '../emails/index.js';
 
 const checkIfAnythingRequiresSetup = (): SetupKeys => {
-    const requiredEnvVars: (keyof SetupKeys)[] = ["OPENAIKEY", "SMTPUSER", "SMTPSERVER", "SMTPPASS", "SMTPPORT"];
+    const requiredEnvVars: (keyof SetupKeys)[] = ["OPENAIKEY", "SMTPUSER", "SMTPSERVER", "SMTPPASS", "SMTPPORT", "FULLNAME"];
     const setupStatus: SetupKeys = {
         OPENAIKEY: false,
         SMTPUSER: false,
         SMTPSERVER: false,
         SMTPPASS: false,
-        SMTPPORT: false
+        SMTPPORT: false,
+        FULLNAME: false
     };
 
     requiredEnvVars.forEach((key) => {
@@ -40,7 +44,7 @@ const addToEnv = (key: string, envData: string) => {
     fs.writeFileSync(envPath, envContent);
 }
 
-export const handleSetup = () => {
+export const handleSetup = async () => {
     const checkData = checkIfAnythingRequiresSetup();
     const questions: Array<Question> = []
 
@@ -55,13 +59,86 @@ export const handleSetup = () => {
     }
 
     if (questions.length > 0) {
-        inquirer.prompt(questions).then((answers) => {
-            for (let key in answers) {
-                console.log(`${key} set to: ${answers[key]}`);
-                addToEnv(key, answers[key])
-            }
-        })
+        const answers = await inquirer.prompt(questions);
+        for (let key in answers) {
+            console.log(`${key} set to: ${answers[key]}`);
+            addToEnv(key, answers[key])
+        }
     }
+}
+
+const checkIfUserIsHappyWithEmail = async (): Promise<boolean> => {
+    const questions: Array<ListQuestionOptions> = [{
+        type: 'list',
+        name: 'choices',
+        message: 'Are you happy with that email? Should we send it?',
+        choices: [
+            'Yes',
+            'No'
+        ],
+        validate: function (answer) {
+            if (!answer) {
+                return "Please select an option"
+            }
+            return true
+        }
+    }]
+
+    const answer = await inquirer.prompt(questions);
+    if (answer.choices === "Yes") {
+        return true;
+    }
+    return false;
+}
+
+const getUpdatedInstruction = async (): Promise<ChatCompletionUserMessageParam> => {
+    const questions: Array<Question> = [
+        {
+            name: "emailUpdate",
+            message: "What would you like to change? ",
+            type: 'input',
+            validate: function (answer) {
+                if (!answer) {
+                    return 'Please provide instructions.';
+                }
+                return true;
+            }
+        },
+    ]
+
+    const answer = await inquirer.prompt(questions);
+    const userMessage: ChatCompletionMessageParam = { role: 'user', content: answer.emailUpdate };
+    return userMessage;
+}
+
+interface EmailParts {
+    subject: string;
+    emailBody: string;
+}
+
+const extractSubjectAndEmail = (emailText: ChatCompletionMessage): EmailParts | void => {
+    const text = emailText.content;
+    if (!text) {
+        return;
+    }
+
+    // Regular expression to find 'Subject:' (case insensitive)
+    const subjectRegex = /subject:\s*(.*?)\s*(\n|$)/i;
+    const subjectMatch = text.match(subjectRegex);
+    if (!subjectMatch) {
+        return;
+    }
+    const subject = subjectMatch[1].trim();
+
+    // Regular expression to find 'Email:' (case insensitive)
+    const emailRegex = /email:\s*(\n|$)/i;
+    const emailIndex = text.search(emailRegex);
+    if (emailIndex === -1) {
+        return;
+    }
+    const emailBody = text.substring(emailIndex).replace(emailRegex, "").trim();
+
+    return { subject, emailBody };
 }
 
 const getEmailInformation = async () => {
@@ -70,22 +147,78 @@ const getEmailInformation = async () => {
         {
             name: "emailTo",
             message: "Who would you like to send an email to? ",
-            type: 'input'
+            type: 'email',
+            validate: function (answer) {
+                if (!answer) {
+                    return 'Please provide an email.';
+                }
+                return /^(([^<>()\[\]\.,;:\s@\"]+(\.[^<>()\[\]\.,;:\s@\"]+)*)|(\".+\"))@(([^<>()\.,;\s@\"]+\.{0,1})+([^<>()\.,;:\s@\"]{2,}|[\d\.]+))$/.test(answer);
+            }
         },
         {
             name: "moreInfo",
-            message: "Please provide some information about the email receiver.",
+            message: `Please provide specific details about the email's content. \nThis may include the recipient's name, the purpose of the email, any key points \nor messages you want to include.`,
             type: 'input',
+            validate: function (answer) {
+                if (!answer) {
+                    return 'Please provide some information, this will help us draft the email.';
+                }
+                return true;
+            }
         },
         {
             name: "tone",
-            message: "Would you like to use a specific tone for this email? ",
+            message: "How would you like the tone or style of the email to be? ",
             type: 'input'
         }
     ]
 
+    let userMessage: string = ''
     const answers = await inquirer.prompt(questions);
-    console.log(answers)
+    userMessage += `Context: ${answers.moreInfo}\n Email Signature: ${process.env.FULLNAME}`
+    if (answers.tone) {
+        userMessage += `\nTone: ${answers.tone}`
+    }
+    const userMessages: ChatCompletionMessageParam = { role: 'user', content: userMessage }
+    const correspondence: Array<ChatCompletionAssistantMessageParam | ChatCompletionMessageParam> = [userMessages]
+
+    try {
+        console.log("-----GENERATING EMAIL-----")
+        let email = await generateEmail(correspondence);
+        console.log(email)
+        console.log("----EMAIL GENERATED-----")
+
+        let isHappy = await checkIfUserIsHappyWithEmail()
+        while (!isHappy) {
+            const updates = await getUpdatedInstruction()
+            if (typeof email !== 'undefined') {
+                const botMessage: ChatCompletionAssistantMessageParam = { role: email.role, content: email.content };
+                correspondence.push(botMessage);
+            }
+
+            correspondence.push(updates);
+
+            console.log("-----UPDATING EMAIL-----")
+            email = await generateEmail(correspondence);
+            console.log(email)
+            console.log("----EMAIL UPDATED-----")
+            isHappy = await checkIfUserIsHappyWithEmail()
+        }
+        if (typeof email !== 'undefined') {
+            const emailData = extractSubjectAndEmail(email);
+            if (!emailData) {
+                console.log("Something went wrong while preparing the email.")
+                return;
+            }
+            const { subject, emailBody } = emailData;
+            console.log(subject, emailBody)
+            console.log('----- SENDING EMAIL ----')
+            await sendEmail(answers.emailTo, subject, emailBody)
+        }
+
+    } catch (error) {
+        console.error(error);
+    }
 }
 
 const handleUsersChoice = async (choice: string) => {
@@ -98,14 +231,15 @@ const handleUsersChoice = async (choice: string) => {
 }
 
 
-export const showChoices = async ()=> {
+export const showChoices = async () => {
     const questions: Array<ListQuestionOptions> = [{
         type: 'list',
         name: 'choices',
         message: 'What would you like to do today?',
         choices: [
             'Generate and Send Email',
-            'Draft Email'
+            'Draft Email',
+            'Quit'
         ],
         validate: function (answer) {
             if (answer.length < 1) {
@@ -116,6 +250,5 @@ export const showChoices = async ()=> {
     }]
 
     const answer = await inquirer.prompt(questions);
-    console.log(answer)
     handleUsersChoice(answer.choices)
 }
