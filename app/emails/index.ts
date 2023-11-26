@@ -4,11 +4,14 @@ import SMTPTransport from 'nodemailer/lib/smtp-transport';
 
 const prepareTransporter = (): nodemailer.Transporter<SMTPTransport.SentMessageInfo> => {
     const port = typeof process.env.SMTPPORT === 'string' ? parseInt(process.env.SMTPPORT) : 587;
-
+    let isSecure = false;
+    if (port === 465) {
+        isSecure = true;
+    }
     const transportOptions = nodemailer.createTransport({
         host: process.env.SMTPSERVER,
         port: port,
-        secure: false,
+        secure: isSecure,
         auth: {
             user: process.env.SMTPUSER,
             pass: process.env.SMTPPASS
