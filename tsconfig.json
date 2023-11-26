@@ -4,6 +4,7 @@
         "module": "ESNext",
         "moduleResolution": "node",
         "outDir": "./dist",
+        "rootDir": "./app",
         "strict": true,         
         "esModuleInterop": true 
       },

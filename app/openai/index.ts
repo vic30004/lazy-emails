@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI();
+const openai = new OpenAI({ apiKey: process.env.OPENAIKEY });
 
 export const generateEmail = async (): Promise<OpenAI.Chat.ChatCompletionMessage> => {
     const params: OpenAI.Chat.ChatCompletionCreateParams = {

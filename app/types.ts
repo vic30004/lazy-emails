@@ -1,5 +1,5 @@
 export interface SetupKeys {
-    [key: string]: boolean,
+    [key: string]: boolean
 }
 
 export interface EnvVars {
